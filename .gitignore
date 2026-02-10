@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 평가 결과 (로컬 실행 산출물)
+reports/
+*.report.json
+*.report.md
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code 내부
+.claude/
+
+# 내부 작업 문서
+plans/
+IMPLEMENTATION_PLAN.md
+KNOWLEDGE_GRAPH.md
+gemini_feedback
