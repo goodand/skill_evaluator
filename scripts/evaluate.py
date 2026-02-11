@@ -6,9 +6,10 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from models import MetricResult, LayerResult
+from models import MetricResult, LayerResult, EcosystemMetric, EcosystemResult
 from discovery import discover_skills, SkillMetadata
 from reporter import format_text, format_json, format_markdown, weighted_score
 
@@ -199,6 +200,21 @@ def check_workflow_structure(skill: SkillMetadata) -> MetricResult:
         score += 15
         details.append("조건부 실행 있음")
 
+    # ASCII 파이프라인 다이어그램
+    if re.search(r'──►|──>|───▶|→.*→', text):
+        score += 10
+        details.append("파이프라인 다이어그램")
+
+    # mermaid 블록
+    if '```mermaid' in text:
+        score += 5
+        details.append("Mermaid 다이어그램")
+
+    # 테이블 기반 라우팅
+    if re.search(r'\|.*커맨드.*\||\|.*[Cc]ommand.*\||\|.*모드.*\|', text):
+        score += 5
+        details.append("테이블 라우팅")
+
     return MetricResult(
         name="workflow_structure",
         score=min(score, 60.0),
@@ -219,26 +235,41 @@ def check_plan_adherence(skill: SkillMetadata) -> MetricResult:
     # 체크리스트
     checklists = re.findall(r'- \[[ x]\]', text)
     if checklists:
-        score += 10
+        score += 8
         details.append(f"체크리스트 {len(checklists)}개")
 
     # 자가 점검 섹션
     if re.search(r'자가\s*점검|self[- ]?check', text, re.IGNORECASE):
-        score += 15
+        score += 10
         details.append("자가 점검 섹션")
 
-    # 사용 조건 / 비사용 조건
-    if re.search(r'[Ww]hen to use|사용\s*조건|언제\s*사용', text):
+    # 사용 조건 / 비사용 조건 (discovery에서 파싱한 결과 활용)
+    if skill.has_when_to_use:
         score += 5
-        details.append("사용 조건 명시")
-    if re.search(r"[Dd]on'?t use|비목표|[Nn]on-?[Gg]oal", text):
+        details.append("When to Use 섹션")
+    if skill.has_dont_use:
         score += 5
-        details.append("비목표/비사용 명시")
+        details.append("Don't Use 섹션")
 
     # 전환 기준
     if re.search(r'전환|transition|다음\s*단계|next\s*phase', text, re.IGNORECASE):
-        score += 5
+        score += 3
         details.append("단계 전환 기준")
+
+    # Quick Start (enhanced)
+    if skill.has_quick_start:
+        score += 3
+        details.append("Quick Start 섹션")
+
+    # LLM 판단 가이드
+    if skill.has_llm_judgment_guide:
+        score += 4
+        details.append("LLM 판단 가이드")
+
+    # Prerequisites
+    if skill.has_prerequisites:
+        score += 2
+        details.append("Prerequisites 섹션")
 
     if not details:
         details.append("계획 준수 마커 없음")
@@ -699,6 +730,67 @@ def check_reference_freshness(skill: SkillMetadata) -> MetricResult:
     )
 
 
+def check_reference_content_validity(skill: SkillMetadata) -> MetricResult:
+    """참조 파일 내용 품질 검증 (10점)."""
+    refs_dir = skill.skill_path / "references"
+    if not refs_dir.is_dir() or not skill.reference_files:
+        return MetricResult(
+            name="reference_content_validity", score=0, max_score=10.0,
+            details="references/ 없음", passed=False,
+        )
+
+    score = 0.0
+    details = []
+    json_score = 0
+    md_score = 0
+    nonempty_score = 0
+
+    for fname in skill.reference_files:
+        fpath = refs_dir / fname
+        if not fpath.exists():
+            continue
+
+        try:
+            content = fpath.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError):
+            continue
+
+        # 비어있지 않음 체크
+        if len(content.strip()) > 0:
+            nonempty_score += 1
+
+        # JSON 검증
+        if fname.endswith(".json"):
+            try:
+                json.loads(content)
+                json_score += 3
+            except (json.JSONDecodeError, ValueError):
+                details.append(f"{fname}: invalid JSON")
+
+        # Markdown 검증
+        if fname.endswith(".md"):
+            lines = content.split("\n")
+            has_heading = any(l.startswith("#") for l in lines)
+            if len(lines) >= 10 and has_heading:
+                md_score += 2
+            elif len(lines) >= 5:
+                md_score += 1
+
+    json_score = min(json_score, 6)
+    md_score = min(md_score, 6)
+    nonempty_score = min(nonempty_score, 4)
+    score = min(json_score + md_score + nonempty_score, 10)
+
+    details.insert(0, f"json:{json_score} md:{md_score} nonempty:{nonempty_score}")
+
+    return MetricResult(
+        name="reference_content_validity",
+        score=score, max_score=10.0,
+        details="; ".join(details),
+        passed=score >= 4,
+    )
+
+
 def evaluate_l3(skill: SkillMetadata) -> LayerResult:
     """L3 검색 전체 평가."""
     result = LayerResult(layer="L3", skill_name=skill.name)
@@ -707,6 +799,7 @@ def evaluate_l3(skill: SkillMetadata) -> LayerResult:
         check_reference_type_coverage(skill),
         check_progressive_disclosure(skill),
         check_reference_freshness(skill),
+        check_reference_content_validity(skill),
     ]
     result.compute_score()
     for m in result.metrics:
@@ -875,6 +968,77 @@ def check_bridge_availability(skill: SkillMetadata) -> MetricResult:
     )
 
 
+def check_function_quality(skill: SkillMetadata) -> MetricResult:
+    """함수 docstring + 타입 힌트 커버리지 (15점)."""
+    scripts_dir = skill.skill_path / "scripts"
+    if not scripts_dir.is_dir():
+        return MetricResult(
+            name="function_quality", score=0, max_score=15.0,
+            details="scripts/ 없음", passed=False,
+        )
+
+    func_pattern = re.compile(r'^(\s*)def\s+(\w+)\s*\(([^)]*)\)(\s*->\s*\S+)?:', re.MULTILINE)
+    total_funcs = 0
+    with_docstring = 0
+    with_typehint = 0
+
+    for py_file in scripts_dir.rglob("*.py"):
+        if py_file.name == "__init__.py":
+            continue
+        try:
+            content = py_file.read_text(encoding="utf-8")
+            lines = content.split("\n")
+        except (UnicodeDecodeError, PermissionError):
+            continue
+
+        for match in func_pattern.finditer(content):
+            total_funcs += 1
+            # 타입 힌트 체크: 반환 타입 또는 파라미터 타입
+            params = match.group(3)
+            return_type = match.group(4)
+            if return_type or (": " in params and "self" not in params.split(":")[0].split(",")[0]):
+                with_typehint += 1
+
+            # docstring 체크: def 다음 줄에 """ 또는 '''
+            func_end = match.end()
+            remaining = content[func_end:func_end + 200].lstrip()
+            if remaining.startswith('"""') or remaining.startswith("'''"):
+                with_docstring += 1
+
+    if total_funcs == 0:
+        return MetricResult(
+            name="function_quality", score=5, max_score=15.0,
+            details="함수 없음", passed=True,
+        )
+
+    doc_ratio = with_docstring / total_funcs
+    hint_ratio = with_typehint / total_funcs
+
+    score = 0.0
+    if doc_ratio >= 0.8:
+        score += 10
+    elif doc_ratio >= 0.5:
+        score += 8
+    elif doc_ratio >= 0.3:
+        score += 5
+    else:
+        score += 2
+
+    if hint_ratio >= 0.6:
+        score += 5
+    elif hint_ratio >= 0.3:
+        score += 3
+    else:
+        score += 1
+
+    return MetricResult(
+        name="function_quality",
+        score=min(score, 15.0), max_score=15.0,
+        details=f"함수 {total_funcs}개, docstring {with_docstring} ({doc_ratio:.0%}), 타입힌트 {with_typehint} ({hint_ratio:.0%})",
+        passed=doc_ratio >= 0.3,
+    )
+
+
 def _load_script_benchmarks(skill: SkillMetadata, benchmarks_dir: Path) -> dict:
     """L5 벤치마크 데이터 로드."""
     bench_file = benchmarks_dir / "L5_execution" / "script_tests.json"
@@ -949,6 +1113,7 @@ def evaluate_l5(skill: SkillMetadata, benchmarks_dir: Path = None) -> LayerResul
         check_cli_interface(skill),
         check_docstrings(skill),
         check_bridge_availability(skill),
+        check_function_quality(skill),
     ]
 
     # 벤치마크 메트릭 추가 (있을 때만 점수에 반영)
@@ -961,6 +1126,203 @@ def evaluate_l5(skill: SkillMetadata, benchmarks_dir: Path = None) -> LayerResul
     result.compute_score()
     for m in result.metrics:
         if not m.passed:
+            result.recommendations.append(f"{m.name}: {m.details}")
+    return result
+
+
+# ──────────────────────────────────────────────
+# Ecosystem: 크로스 스킬 분석
+# ──────────────────────────────────────────────
+
+def check_bridge_connectivity(skills: list) -> EcosystemMetric:
+    """브릿지 연결 양방향 검증 (25점)."""
+    score = 25.0
+    details = []
+    affected = []
+
+    skill_names = {s.skill_path.name for s in skills}
+
+    for skill in skills:
+        bridge_files = []
+        bridges_dir = skill.skill_path / "bridges"
+        scripts_dir = skill.skill_path / "scripts"
+
+        if bridges_dir.is_dir():
+            bridge_files.extend(bridges_dir.rglob("*.py"))
+            bridge_files.extend(bridges_dir.rglob("*.md"))
+        if scripts_dir.is_dir():
+            for f in scripts_dir.glob("bridge*.py"):
+                bridge_files.append(f)
+
+        for bf in bridge_files:
+            try:
+                content = bf.read_text(encoding="utf-8").lower()
+            except (UnicodeDecodeError, PermissionError):
+                continue
+            for other_name in skill_names:
+                if other_name == skill.skill_path.name:
+                    continue
+                if other_name.lower() in content:
+                    # 양방향 확인: 상대 스킬도 이 스킬을 참조하는지
+                    other_skill = next((s for s in skills if s.skill_path.name == other_name), None)
+                    if other_skill and skill.skill_path.name not in [t for t in other_skill.pipeline_targets]:
+                        score -= 3
+                        affected.append(f"{skill.name}→{other_name}")
+
+    score = max(score, 0)
+    if affected:
+        details.append(f"단방향 연결 {len(affected)}건: {', '.join(affected[:5])}")
+    else:
+        details.append("모든 브릿지 연결 양호")
+
+    return EcosystemMetric(
+        name="bridge_connectivity", score=score, max_score=25.0,
+        details="; ".join(details), affected_skills=affected,
+    )
+
+
+def check_cli_consistency(skills: list) -> EcosystemMetric:
+    """CLI 플래그 네이밍 일관성 (25점)."""
+    flag_usage = {}  # {flag_name: [skill_names]}
+
+    for skill in skills:
+        scripts_dir = skill.skill_path / "scripts"
+        if not scripts_dir.is_dir():
+            continue
+        for py_file in scripts_dir.rglob("*.py"):
+            try:
+                content = py_file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, PermissionError):
+                continue
+            flags = re.findall(r"add_argument\(\s*['\"](-{1,2}[\w-]+)['\"]", content)
+            for f in flags:
+                flag_usage.setdefault(f, set()).add(skill.name)
+
+    # 2+ 스킬에서 사용되는 플래그만 평가
+    shared_flags = {f: s for f, s in flag_usage.items() if len(s) >= 2}
+    if not shared_flags:
+        return EcosystemMetric(
+            name="cli_consistency", score=15, max_score=25.0,
+            details="공유 플래그 없음 (비교 불가)", affected_skills=[],
+        )
+
+    # 유사 플래그 그룹 감지 (--format vs -f, --verbose vs -v)
+    inconsistencies = []
+    # --format과 -f가 동시에 있으면 일관성 문제
+    all_flags = set(flag_usage.keys())
+    pairs = [("--format", "-f"), ("--verbose", "-v"), ("--output", "-o")]
+    for long_f, short_f in pairs:
+        if long_f in all_flags and short_f in all_flags:
+            long_skills = flag_usage[long_f]
+            short_skills = flag_usage[short_f]
+            if long_skills != short_skills:
+                inconsistencies.append(f"{long_f}/{short_f}")
+
+    score = 25 - len(inconsistencies) * 5
+    score = max(score, 0)
+
+    details = []
+    details.append(f"공유 플래그 {len(shared_flags)}개")
+    if inconsistencies:
+        details.append(f"불일치: {', '.join(inconsistencies)}")
+    else:
+        details.append("네이밍 일관")
+
+    return EcosystemMetric(
+        name="cli_consistency", score=score, max_score=25.0,
+        details="; ".join(details), affected_skills=inconsistencies,
+    )
+
+
+def check_pipeline_coverage(skills: list) -> EcosystemMetric:
+    """파이프라인 커버리지 — 고립 스킬 탐지 (25점)."""
+    connected = set()
+    for skill in skills:
+        if skill.pipeline_targets:
+            connected.add(skill.name)
+            for target in skill.pipeline_targets:
+                # target은 디렉토리 이름, skill.name은 YAML name
+                target_skill = next((s for s in skills if s.skill_path.name == target), None)
+                if target_skill:
+                    connected.add(target_skill.name)
+
+    total = len(skills)
+    isolated = [s.name for s in skills if s.name not in connected]
+    coverage = len(connected) / total if total > 0 else 0
+
+    score = round(coverage * 25)
+    details = [f"연결 {len(connected)}/{total} ({coverage:.0%})"]
+    if isolated:
+        details.append(f"고립: {', '.join(isolated)}")
+
+    return EcosystemMetric(
+        name="pipeline_coverage", score=score, max_score=25.0,
+        details="; ".join(details), affected_skills=isolated,
+    )
+
+
+def check_trigger_ecosystem_health(skills: list) -> EcosystemMetric:
+    """에코시스템 트리거 건강도 (25점)."""
+    all_keywords = {}  # {keyword: [skill_names]}
+    generic_count = 0
+    total_count = 0
+
+    for skill in skills:
+        for kw in skill.triggers.keywords:
+            kw_lower = kw.lower()
+            all_keywords.setdefault(kw_lower, []).append(skill.name)
+            total_count += 1
+            if kw_lower in _GENERIC_KEYWORDS:
+                generic_count += 1
+
+    # 중복 키워드 (2+ 스킬에서 사용)
+    overlapping = {k: v for k, v in all_keywords.items() if len(v) >= 2}
+    overlap_ratio = len(overlapping) / len(all_keywords) if all_keywords else 0
+
+    # 범용 키워드 비율
+    generic_ratio = generic_count / total_count if total_count > 0 else 0
+
+    score = 25.0
+    details = []
+
+    # 중복 페널티
+    if overlap_ratio > 0.2:
+        score -= 10
+        details.append(f"중복 키워드 {len(overlapping)}개 ({overlap_ratio:.0%})")
+    elif overlap_ratio > 0.1:
+        score -= 5
+        details.append(f"중복 키워드 {len(overlapping)}개 ({overlap_ratio:.0%})")
+    else:
+        details.append(f"중복 키워드 적음 ({overlap_ratio:.0%})")
+
+    # 범용 키워드 페널티
+    if generic_ratio > 0.3:
+        score -= 5
+        details.append(f"범용 키워드 높음 ({generic_ratio:.0%})")
+    else:
+        details.append(f"범용 키워드 적정 ({generic_ratio:.0%})")
+
+    score = max(score, 0)
+
+    return EcosystemMetric(
+        name="trigger_ecosystem_health", score=score, max_score=25.0,
+        details="; ".join(details),
+        affected_skills=[k for k in list(overlapping.keys())[:5]],
+    )
+
+
+def evaluate_ecosystem(skills: list) -> EcosystemResult:
+    """에코시스템 전체 평가."""
+    result = EcosystemResult()
+    result.metrics = [
+        check_bridge_connectivity(skills),
+        check_cli_consistency(skills),
+        check_pipeline_coverage(skills),
+        check_trigger_ecosystem_health(skills),
+    ]
+    result.compute_score()
+    for m in result.metrics:
+        if m.score < m.max_score * 0.6:
             result.recommendations.append(f"{m.name}: {m.details}")
     return result
 
@@ -988,6 +1350,169 @@ def _load_config(config_path: Path) -> dict:
     if config_path.exists():
         return json.loads(config_path.read_text(encoding="utf-8"))
     return {}
+
+
+# ──────────────────────────────────────────────
+# History: 스냅샷 저장/로드
+# ──────────────────────────────────────────────
+
+def _build_snapshot(results: dict, ecosystem_result=None) -> dict:
+    """현재 결과를 스냅샷 dict로 변환."""
+    snapshot = {
+        "timestamp": datetime.now().isoformat(),
+        "skills": {},
+        "summary": {},
+    }
+    all_w = []
+    for skill_name, layer_results in results.items():
+        w = weighted_score(layer_results)
+        all_w.append(w)
+        snapshot["skills"][skill_name] = {
+            "weighted": round(w, 1),
+            "layers": {lid: round(lr.overall_score, 1) for lid, lr in layer_results.items()},
+        }
+    snapshot["summary"] = {
+        "weighted_average": round(sum(all_w) / len(all_w), 1) if all_w else 0,
+        "skill_count": len(results),
+    }
+    if ecosystem_result:
+        snapshot["ecosystem"] = {"overall_score": round(ecosystem_result.overall_score, 1)}
+    return snapshot
+
+
+def save_snapshot(results: dict, ecosystem_result=None, filepath: Path = None):
+    """스냅샷을 history.jsonl에 append."""
+    if filepath is None:
+        filepath = Path(__file__).parent.parent / "reports" / "history.jsonl"
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = _build_snapshot(results, ecosystem_result)
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
+    return filepath
+
+
+def load_history(filepath: Path = None) -> list:
+    """history.jsonl에서 모든 스냅샷 로드."""
+    if filepath is None:
+        filepath = Path(__file__).parent.parent / "reports" / "history.jsonl"
+    if not filepath.exists():
+        return []
+    snapshots = []
+    for line in filepath.read_text(encoding="utf-8").strip().split("\n"):
+        if line.strip():
+            snapshots.append(json.loads(line))
+    return snapshots
+
+
+def get_latest(filepath: Path = None):
+    """최신 스냅샷 반환. 없으면 None."""
+    history = load_history(filepath)
+    return history[-1] if history else None
+
+
+def compute_diff(current: dict, baseline: dict) -> dict:
+    """두 스냅샷 비교."""
+    diff = {"summary": {}, "skills": {}, "improved": [], "regressed": [], "new_skills": [], "removed_skills": []}
+
+    # summary diff
+    for key in ["weighted_average", "skill_count"]:
+        before = baseline.get("summary", {}).get(key, 0)
+        after = current.get("summary", {}).get(key, 0)
+        diff["summary"][key] = {"before": before, "after": after, "delta": round(after - before, 1)}
+
+    # per-skill diff
+    curr_skills = current.get("skills", {})
+    base_skills = baseline.get("skills", {})
+
+    all_names = set(list(curr_skills.keys()) + list(base_skills.keys()))
+    for name in sorted(all_names):
+        if name in curr_skills and name not in base_skills:
+            diff["new_skills"].append(name)
+            continue
+        if name not in curr_skills and name in base_skills:
+            diff["removed_skills"].append(name)
+            continue
+
+        curr_w = curr_skills[name]["weighted"]
+        base_w = base_skills[name]["weighted"]
+        delta = round(curr_w - base_w, 1)
+
+        skill_diff = {"weighted": {"before": base_w, "after": curr_w, "delta": delta}, "layers": {}}
+
+        curr_layers = curr_skills[name].get("layers", {})
+        base_layers = base_skills[name].get("layers", {})
+        for lid in set(list(curr_layers.keys()) + list(base_layers.keys())):
+            b = base_layers.get(lid, 0)
+            a = curr_layers.get(lid, 0)
+            skill_diff["layers"][lid] = {"before": b, "after": a, "delta": round(a - b, 1)}
+
+        diff["skills"][name] = skill_diff
+        if delta > 0:
+            diff["improved"].append(name)
+        elif delta < 0:
+            diff["regressed"].append(name)
+
+    return diff
+
+
+def format_diff_text(diff: dict) -> str:
+    """diff 결과 텍스트 출력."""
+    lines = ["=" * 60, "Score Diff Report", "=" * 60, ""]
+
+    s = diff["summary"]
+    avg = s.get("weighted_average", {})
+    d = avg.get("delta", 0)
+    arrow = "+" if d > 0 else ""
+    lines.append(f"Weighted Avg: {avg.get('before', 0):.1f} → {avg.get('after', 0):.1f} ({arrow}{d:.1f})")
+    lines.append("")
+
+    for name, sd in diff["skills"].items():
+        w = sd["weighted"]
+        d = w["delta"]
+        arrow = "+" if d > 0 else ""
+        marker = " ↑" if d > 0 else (" ↓" if d < 0 else "")
+        lines.append(f"  {name}: {w['before']:.1f} → {w['after']:.1f} ({arrow}{d:.1f}){marker}")
+
+    if diff["new_skills"]:
+        lines.append(f"\n  New: {', '.join(diff['new_skills'])}")
+    if diff["removed_skills"]:
+        lines.append(f"\n  Removed: {', '.join(diff['removed_skills'])}")
+
+    lines.append("")
+    lines.append(f"Improved: {len(diff['improved'])} | Regressed: {len(diff['regressed'])}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_history_text(history: list) -> str:
+    """이력 요약 텍스트."""
+    if not history:
+        return "No history entries found."
+    lines = [
+        f"Score History ({len(history)} entries)",
+        "=" * 50,
+        f"{'Date':<20} {'Skills':>6} {'Weighted Avg':>13} {'Delta':>7}",
+        "-" * 50,
+    ]
+    prev_avg = None
+    for snap in history:
+        ts = snap.get("timestamp", "")[:16].replace("T", " ")
+        s = snap.get("summary", {})
+        avg = s.get("weighted_average", 0)
+        count = s.get("skill_count", 0)
+        if prev_avg is not None:
+            d = avg - prev_avg
+            delta_str = f"{'+' if d > 0 else ''}{d:.1f}"
+        else:
+            delta_str = "--"
+        lines.append(f"{ts:<20} {count:>6} {avg:>13.1f} {delta_str:>7}")
+        prev_avg = avg
+    lines.append("=" * 50)
+    if len(history) >= 2:
+        total_d = history[-1]["summary"]["weighted_average"] - history[0]["summary"]["weighted_average"]
+        lines.append(f"Trend: {'+' if total_d > 0 else ''}{total_d:.1f} over {len(history)} evaluations")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main():
@@ -1030,10 +1555,32 @@ def main():
         "--benchmarks", type=Path, default=None,
         help="Benchmarks directory for L2/L5 dynamic evaluation",
     )
+    parser.add_argument(
+        "--ecosystem", action="store_true",
+        help="Include cross-skill ecosystem analysis",
+    )
+    parser.add_argument(
+        "--save-history", action="store_true",
+        help="Save evaluation snapshot to history.jsonl",
+    )
+    parser.add_argument(
+        "--diff", nargs="?", const="latest", default=None,
+        help="Compare with baseline (default: latest). Use N for Nth entry",
+    )
+    parser.add_argument(
+        "--show-history", action="store_true",
+        help="Show score history summary and exit",
+    )
     args = parser.parse_args()
 
     # Config 로드
     config = _load_config(args.config)
+
+    # --show-history: 이력 출력 후 종료
+    if args.show_history:
+        history = load_history()
+        print(format_history_text(history))
+        sys.exit(0)
 
     # skills-root: CLI > env > config
     env_root = os.environ.get("SKILLS_ROOT", "")
@@ -1083,16 +1630,45 @@ def main():
             else:
                 results[skill.name][lid] = LAYERS[lid](skill)
 
-    # 출력
-    formatters = {"text": format_text, "json": format_json, "markdown": format_markdown}
-    output = formatters[args.format](results)
+    # 에코시스템 분석
+    ecosystem_result = None
+    if args.ecosystem:
+        ecosystem_result = evaluate_ecosystem(skills)
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(output, encoding="utf-8")
-        print(f"Saved to {args.output}")
-    else:
-        print(output)
+    # --diff: 베이스라인과 비교
+    if args.diff is not None:
+        history = load_history()
+        if not history:
+            print("No history found. Run with --save-history first.", file=sys.stderr)
+            sys.exit(1)
+        if args.diff == "latest":
+            baseline = history[-1]
+        else:
+            idx = int(args.diff) - 1
+            if idx < 0 or idx >= len(history):
+                print(f"Invalid history index: {args.diff} (1-{len(history)})", file=sys.stderr)
+                sys.exit(1)
+            baseline = history[idx]
+        current_snap = _build_snapshot(results, ecosystem_result)
+        diff = compute_diff(current_snap, baseline)
+        print(format_diff_text(diff))
+
+    # --save-history: 스냅샷 저장
+    if args.save_history:
+        fp = save_snapshot(results, ecosystem_result)
+        print(f"History saved to {fp}", file=sys.stderr)
+
+    # 출력 (diff가 없을 때만 일반 출력)
+    if args.diff is None:
+        formatters = {"text": format_text, "json": format_json, "markdown": format_markdown}
+        output = formatters[args.format](results, ecosystem_result=ecosystem_result)
+
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(output, encoding="utf-8")
+            print(f"Saved to {args.output}")
+        else:
+            print(output)
 
     # CI 모드
     if args.ci_mode:

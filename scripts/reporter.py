@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from models import LayerResult
+from models import LayerResult, EcosystemResult
 
 
 LAYER_WEIGHTS = {
@@ -23,7 +23,25 @@ def weighted_score(layer_results: dict) -> float:
     return weighted_sum / total_weight if total_weight > 0 else 0.0
 
 
-def format_text(results: dict) -> str:
+def _ecosystem_text(eco: EcosystemResult) -> str:
+    """에코시스템 결과 텍스트 렌더링."""
+    lines = [
+        "=" * 60,
+        f"Ecosystem Health: {eco.overall_score:.1f}/100",
+        "=" * 60, "",
+    ]
+    for m in eco.metrics:
+        status = "PASS" if m.score >= m.max_score * 0.6 else "WARN"
+        lines.append(f"  {m.name}: {m.score:.0f}/{m.max_score:.0f} [{status}] - {m.details}")
+    if eco.recommendations:
+        lines.append("  Recommendations:")
+        for r in eco.recommendations:
+            lines.append(f"    - {r}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def format_text(results: dict, ecosystem_result=None) -> str:
     """Text 출력. results: {skill_name: {layer_id: LayerResult}}"""
     layers_used = sorted({lid for lrs in results.values() for lid in lrs})
     lines = ["=" * 60, f"Skill Evaluator - {', '.join(layers_used)}", "=" * 60, ""]
@@ -53,10 +71,14 @@ def format_text(results: dict) -> str:
     lines.append("-" * 60)
     lines.append(f"Total: {len(results)} skills | Layers: {', '.join(layers_used)} | Weighted Avg: {avg:.1f}/100")
     lines.append("")
+
+    if ecosystem_result:
+        lines.append(_ecosystem_text(ecosystem_result))
+
     return "\n".join(lines)
 
 
-def format_json(results: dict) -> str:
+def format_json(results: dict, ecosystem_result=None) -> str:
     """JSON 출력."""
     output = {"timestamp": datetime.now().isoformat(), "skills": [], "summary": {}}
 
@@ -83,10 +105,22 @@ def format_json(results: dict) -> str:
         "max": round(max(all_w), 1) if all_w else 0,
         "layer_weights": LAYER_WEIGHTS,
     }
+
+    if ecosystem_result:
+        output["ecosystem"] = {
+            "overall_score": round(ecosystem_result.overall_score, 1),
+            "metrics": [
+                {"name": m.name, "score": m.score, "max_score": m.max_score,
+                 "details": m.details, "affected_skills": m.affected_skills}
+                for m in ecosystem_result.metrics
+            ],
+            "recommendations": ecosystem_result.recommendations,
+        }
+
     return json.dumps(output, ensure_ascii=False, indent=2)
 
 
-def format_markdown(results: dict) -> str:
+def format_markdown(results: dict, ecosystem_result=None) -> str:
     """Markdown 리포트."""
     layers_used = sorted({lid for lrs in results.values() for lid in lrs})
     lines = [
@@ -113,7 +147,7 @@ def format_markdown(results: dict) -> str:
 
     all_w = [weighted_score(lrs) for lrs in results.values()]
     avg = sum(all_w) / len(all_w) if all_w else 0
-    lines.append(f"| **Average** | | | | | | **{avg:.1f}** |")
+    lines.append(f"| **Average** | " + " | ".join(["" for _ in layers_used]) + f" | **{avg:.1f}** |")
     lines.append("")
 
     # 스킬별 상세
@@ -138,6 +172,23 @@ def format_markdown(results: dict) -> str:
         if all_recs:
             lines.append("**Recommendations:**")
             for r in all_recs:
+                lines.append(f"- {r}")
+            lines.append("")
+
+    # 에코시스템
+    if ecosystem_result:
+        lines.append("## Ecosystem Health")
+        lines.append("")
+        lines.append(f"**Overall: {ecosystem_result.overall_score:.1f}/100**")
+        lines.append("")
+        lines.append("| Metric | Score | Details |")
+        lines.append("|--------|------:|---------|")
+        for m in ecosystem_result.metrics:
+            lines.append(f"| {m.name} | {m.score:.0f}/{m.max_score:.0f} | {m.details} |")
+        lines.append("")
+        if ecosystem_result.recommendations:
+            lines.append("**Ecosystem Recommendations:**")
+            for r in ecosystem_result.recommendations:
                 lines.append(f"- {r}")
             lines.append("")
 

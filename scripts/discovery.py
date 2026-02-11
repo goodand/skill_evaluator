@@ -98,6 +98,73 @@ def _extract_triggers_from_markdown(body: str) -> List[str]:
     return list(dict.fromkeys(triggers))
 
 
+def _extract_sections(body: str) -> dict:
+    """markdown 본문을 ## 헤더 기준으로 분리 → {header_text: content}."""
+    sections = {}
+    current_header = None
+    current_lines = []
+
+    for line in body.split("\n"):
+        if line.startswith("## "):
+            if current_header is not None:
+                sections[current_header] = "\n".join(current_lines)
+            current_header = line[3:].strip()
+            current_lines = []
+        elif current_header is not None:
+            current_lines.append(line)
+
+    if current_header is not None:
+        sections[current_header] = "\n".join(current_lines)
+
+    return sections
+
+
+def _extract_code_blocks(body: str) -> List[tuple]:
+    """fenced code block에서 (언어태그, 내용) 추출."""
+    pattern = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+    return pattern.findall(body)
+
+
+def _detect_pipeline_targets(body: str, skill_names: List[str]) -> List[str]:
+    """본문에서 다른 스킬 이름 참조 탐지."""
+    targets = []
+    body_lower = body.lower()
+    for name in skill_names:
+        if name.lower() in body_lower:
+            targets.append(name)
+    return targets
+
+
+def _detect_section_presence(sections: dict) -> dict:
+    """알려진 섹션 패턴 존재 여부 판별."""
+    result = {
+        "has_when_to_use": False,
+        "has_dont_use": False,
+        "has_pipeline_integration": False,
+        "has_llm_judgment_guide": False,
+        "has_quick_start": False,
+        "has_cli_options": False,
+        "has_prerequisites": False,
+    }
+    for header in sections:
+        h = header.lower()
+        if re.search(r'when to use|사용\s*조건|언제\s*사용', h):
+            result["has_when_to_use"] = True
+        if re.search(r"don'?t use|비목표|non-?goal|비사용", h):
+            result["has_dont_use"] = True
+        if re.search(r'pipeline|파이프라인', h):
+            result["has_pipeline_integration"] = True
+        if re.search(r'llm.*판단|llm.*decision|자가\s*판단', h):
+            result["has_llm_judgment_guide"] = True
+        if re.search(r'quick\s*start|빠른\s*시작', h):
+            result["has_quick_start"] = True
+        if re.search(r'cli.*옵션|cli.*option|command', h):
+            result["has_cli_options"] = True
+        if re.search(r'prerequisit|사전\s*요구|설치|setup|환경', h):
+            result["has_prerequisites"] = True
+    return result
+
+
 def parse_skill_md(skill_dir: Path) -> Optional[SkillMetadata]:
     """SKILL.md를 파싱하여 SkillMetadata 생성."""
     skill_md = skill_dir / "SKILL.md"
@@ -138,6 +205,13 @@ def parse_skill_md(skill_dir: Path) -> Optional[SkillMetadata]:
         all_triggers = []
         source = "yaml_description"
 
+    # 섹션 분석
+    sections = _extract_sections(body)
+    section_presence = _detect_section_presence(sections)
+    code_blocks = _extract_code_blocks(body)
+    code_languages = list(dict.fromkeys(lang for lang, _ in code_blocks if lang))
+    section_headers = list(sections.keys())
+
     # 파일시스템 스캔
     scripts_dir = skill_dir / "scripts"
     refs_dir = skill_dir / "references"
@@ -162,9 +236,20 @@ def parse_skill_md(skill_dir: Path) -> Optional[SkillMetadata]:
         has_bridges_dir=bridges_dir.is_dir(),
         has_tests_dir=tests_dir.is_dir(),
         has_design_decision=(skill_dir / "DESIGN_DECISION.md").exists(),
+        has_when_to_use=section_presence["has_when_to_use"],
+        has_dont_use=section_presence["has_dont_use"],
+        has_pipeline_integration=section_presence["has_pipeline_integration"],
+        has_llm_judgment_guide=section_presence["has_llm_judgment_guide"],
+        has_quick_start=section_presence["has_quick_start"],
+        has_cli_options=section_presence["has_cli_options"],
+        has_prerequisites=section_presence["has_prerequisites"],
         script_files=script_files,
         reference_files=ref_files,
         skill_md_lines=len(lines),
+        code_block_count=len(code_blocks),
+        code_block_languages=code_languages,
+        section_headers=section_headers,
+        pipeline_targets=[],  # 다른 스킬명을 알아야 하므로 discover_skills에서 후처리
     )
 
 
@@ -179,5 +264,13 @@ def discover_skills(skills_root: Path) -> List[SkillMetadata]:
             meta = parse_skill_md(child)
             if meta:
                 skills.append(meta)
+
+    # pipeline_targets 후처리: 다른 스킬 이름 참조 탐지
+    skill_names = [s.skill_path.name for s in skills]
+    for skill in skills:
+        skill_md = skill.skill_path / "SKILL.md"
+        body = skill_md.read_text(encoding="utf-8")
+        other_names = [n for n in skill_names if n != skill.skill_path.name]
+        skill.pipeline_targets = _detect_pipeline_targets(body, other_names)
 
     return skills
