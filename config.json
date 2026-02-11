@@ -1,0 +1,12 @@
+{
+    "skills_root": "/Users/jaehyuntak/Desktop/Project_____현재 진행중인/narrative-ai/.claude/skills",
+    "threshold": 60.0,
+    "layer_weights": {
+        "L1": 0.20,
+        "L2": 0.15,
+        "L3": 0.15,
+        "L4": 0.15,
+        "L5": 0.25,
+        "L6": 0.10
+    }
+}

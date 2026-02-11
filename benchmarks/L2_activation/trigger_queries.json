@@ -1,0 +1,54 @@
+{
+  "troubleshooting-cot": {
+    "positive": [
+      {"query": "이 코드가 왜 안 되지? 어제까지 잘 됐는데", "expected": true},
+      {"query": "root cause 분석 좀 해줘", "expected": true},
+      {"query": "회귀 버그가 발생한 것 같아 bisect 해줘", "expected": true},
+      {"query": "디버깅 도와줘 에러 원인을 모르겠어", "expected": true},
+      {"query": "트러블슈팅 해야 하는데 근본 원인을 찾아줘", "expected": true}
+    ],
+    "negative": [
+      {"query": "프로젝트의 아키텍처를 분석해줘", "expected": false},
+      {"query": "이 클래스의 상속 구조를 보여줘", "expected": false},
+      {"query": "런타임 실행 흐름을 추적해줘", "expected": false},
+      {"query": "의존성 패키지 phantom 탐지 해줘", "expected": false}
+    ]
+  },
+  "depsolve-analyzer": {
+    "positive": [
+      {"query": "이 프로젝트의 dependency analysis 해줘", "expected": true},
+      {"query": "phantom 의존성 detection 해줘", "expected": true},
+      {"query": "import audit 실행해서 circular dependency 찾아줘", "expected": true},
+      {"query": "diamond dependency 문제가 있는지 확인해줘", "expected": true},
+      {"query": "package version conflict 분석해줘", "expected": true}
+    ],
+    "negative": [
+      {"query": "이 클래스가 MRO에서 어떤 순서인지 알려줘", "expected": false},
+      {"query": "call graph를 그려서 함수 호출 순서를 보여줘", "expected": false},
+      {"query": "DAG 판별해서 cycle detection 해줘", "expected": false}
+    ]
+  },
+  "runtime-flow-tracer": {
+    "positive": [
+      {"query": "런타임 추적해서 call graph 만들어줘", "expected": true},
+      {"query": "함수 호출 추적 해줘 실행 흐름이 궁금해", "expected": true},
+      {"query": "pyftrace로 execution trace 뜨자", "expected": true},
+      {"query": "테스트 실패 분석 위해 실행 흐름을 추적해줘", "expected": true}
+    ],
+    "negative": [
+      {"query": "이 코드의 트러블슈팅 해줘 왜 안 되지", "expected": false},
+      {"query": "구조 분류해서 tree 검사 해줘", "expected": false}
+    ]
+  },
+  "class-hierarchy-classifier": {
+    "positive": [
+      {"query": "이 클래스의 상속 관계를 분석해줘 MRO 포함", "expected": true},
+      {"query": "is X also Y 관계인지 포함관계 확인해줘", "expected": true},
+      {"query": "class hierarchy를 그려서 inheritance 구조 보여줘", "expected": true}
+    ],
+    "negative": [
+      {"query": "코드 구조 분석해서 모듈 의존성 그래프 만들어줘", "expected": false},
+      {"query": "순환 탐지해서 DAG인지 확인해줘", "expected": false}
+    ]
+  }
+}

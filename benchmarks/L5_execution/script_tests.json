@@ -1,0 +1,37 @@
+{
+  "troubleshooting-cot": {
+    "required_patterns": [
+      {"file": "bisect_runner.py", "pattern": "argparse|ArgumentParser", "desc": "CLI 인자 파싱 존재"},
+      {"file": "bisect_runner.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "pattern_detector.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "syntax_checker.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "bridge.py", "pattern": "def\\s+\\w+", "desc": "bridge 함수 정의 존재"},
+      {"file": "commit_analyzer.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"}
+    ],
+    "forbidden_patterns": [
+      {"file": "bisect_runner.py", "pattern": "password|secret|api_key\\s*=\\s*['\"]\\w+", "desc": "하드코딩 비밀정보 없어야 함"},
+      {"file": "pattern_detector.py", "pattern": "password|secret|api_key\\s*=\\s*['\"]\\w+", "desc": "하드코딩 비밀정보 없어야 함"}
+    ]
+  },
+  "depsolve-analyzer": {
+    "required_patterns": [
+      {"file": "run_depsolve.py", "pattern": "argparse|ArgumentParser", "desc": "CLI 인자 파싱 존재"},
+      {"file": "run_depsolve.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "run_depsolve.py", "pattern": "if\\s+__name__", "desc": "메인 엔트리포인트 존재"}
+    ],
+    "forbidden_patterns": [
+      {"file": "run_depsolve.py", "pattern": "password|secret|api_key\\s*=\\s*['\"]\\w+", "desc": "하드코딩 비밀정보 없어야 함"}
+    ]
+  },
+  "codebase-architecture-mapper": {
+    "required_patterns": [
+      {"file": "mapper.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "mapper.py", "pattern": "import|from\\s+\\w+\\s+import", "desc": "모듈 임포트 존재"},
+      {"file": "context_generator.py", "pattern": "def\\s+\\w+", "desc": "함수 정의 존재"},
+      {"file": "bridge.py", "pattern": "def\\s+\\w+", "desc": "bridge 함수 정의 존재"}
+    ],
+    "forbidden_patterns": [
+      {"file": "mapper.py", "pattern": "password|secret|api_key\\s*=\\s*['\"]\\w+", "desc": "하드코딩 비밀정보 없어야 함"}
+    ]
+  }
+}
