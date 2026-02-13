@@ -76,7 +76,7 @@ def _extract_triggers_from_markdown(body: str) -> List[str]:
     triggers = []
 
     match = re.search(
-        r'##\s*트리거\s*\n((?:[-*]\s*.+\n?)+)',
+        r'##\s*트리거\s*\n(?:(?![-*]\s).*\n)*((?:[-*]\s*.+\n?)+)',
         body,
         re.MULTILINE
     )

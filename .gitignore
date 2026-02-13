@@ -24,5 +24,7 @@ reports/
 plans/
 IMPLEMENTATION_PLAN.md
 KNOWLEDGE_GRAPH.md
-gemini_feedback
-tests/
+gemini_feedback.md
+
+# 로컬 히스토리
+.history/
