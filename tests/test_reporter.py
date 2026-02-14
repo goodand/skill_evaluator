@@ -4,7 +4,8 @@ import json
 import pytest
 
 from models import MetricResult, LayerResult, EcosystemMetric, EcosystemResult
-from reporter import format_text, format_json, format_markdown, weighted_score
+from reporter import format_text, format_json, format_markdown
+from score_utils import weighted_score
 
 
 # ──────────────────────────────────────────────
@@ -148,6 +149,21 @@ class TestFormatText:
         text = format_text(results, ecosystem_result=eco)
         assert "Ecosystem Health" in text
 
+    def test_summary_includes_error_count(self):
+        bad = LayerResult(layer="L1", skill_name="bad")
+        bad.metrics = [
+            MetricResult(
+                name="runtime_error",
+                score=0.0,
+                max_score=1.0,
+                details="RuntimeError: boom",
+                passed=False,
+            )
+        ]
+        bad.compute_score()
+        text = format_text({"bad": {"L1": bad}})
+        assert "Errors: 1" in text
+
 
 # ──────────────────────────────────────────────
 # format_json
@@ -209,6 +225,22 @@ class TestFormatJson:
         data = json.loads(format_json(results, layer_weights={"L1": 1.0}))
         assert data["summary"]["layer_weights"] == {"L1": 1.0}
 
+    def test_summary_error_count(self):
+        bad = LayerResult(layer="L1", skill_name="bad")
+        bad.metrics = [
+            MetricResult(
+                name="runtime_error",
+                score=0.0,
+                max_score=1.0,
+                details="RuntimeError: boom",
+                passed=False,
+            )
+        ]
+        bad.compute_score()
+        good = _make_layer_result("L1", "good")
+        data = json.loads(format_json({"good": {"L1": good}, "bad": {"L1": bad}}))
+        assert data["summary"]["error_count"] == 1
+
 
 # ──────────────────────────────────────────────
 # format_markdown
@@ -238,3 +270,18 @@ class TestFormatMarkdown:
         eco = _make_ecosystem()
         md = format_markdown(results, ecosystem_result=eco)
         assert "## Ecosystem Health" in md
+
+    def test_summary_includes_error_count(self):
+        bad = LayerResult(layer="L1", skill_name="bad")
+        bad.metrics = [
+            MetricResult(
+                name="runtime_error",
+                score=0.0,
+                max_score=1.0,
+                details="RuntimeError: boom",
+                passed=False,
+            )
+        ]
+        bad.compute_score()
+        md = format_markdown({"bad": {"L1": bad}})
+        assert "Errors: 1" in md

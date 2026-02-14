@@ -16,20 +16,77 @@ from history import (
     load_history,
     save_snapshot,
 )
-from reporter import format_json, format_markdown, format_text, weighted_score
+from models import LayerResult, MetricResult
+from reporter import format_json, format_markdown, format_text
+from score_utils import weighted_score
+
+
+class LayerEvaluationError(Exception):
+    """레이어 평가 실패를 상위 흐름으로 전달."""
+
+    def __init__(self, skill_name: str, layer_id: str, original: Exception):
+        self.skill_name = skill_name
+        self.layer_id = layer_id
+        self.original = original
+        super().__init__(f"skill={skill_name} layer={layer_id} error={type(original).__name__}: {original}")
+
+
+def _error_layer_result(layer_id: str, skill_name: str, exc: Exception) -> LayerResult:
+    """레이어 평가 실패를 LayerResult 형태로 캡슐화."""
+    detail = f"{type(exc).__name__}: {exc}"
+    lr = LayerResult(layer=layer_id, skill_name=skill_name)
+    lr.metrics = [
+        MetricResult(
+            name="runtime_error",
+            score=0.0,
+            max_score=1.0,
+            details=detail,
+            passed=False,
+        )
+    ]
+    lr.compute_score()
+    lr.recommendations.append(f"runtime_error: {detail}")
+    return lr
 
 
 def _evaluate_one_skill(task):
     """단일 스킬의 모든 레이어를 평가."""
-    skill, layer_ids, all_skills, benchmarks_dir = task
+    skill, layer_ids, all_skills, benchmarks_dir, fail_fast = task
     layer_results = {}
     for lid in layer_ids:
-        layer_results[lid] = LAYERS[lid](
-            skill,
-            all_skills=all_skills,
-            benchmarks_dir=benchmarks_dir,
-        )
+        try:
+            layer_results[lid] = LAYERS[lid](
+                skill,
+                all_skills=all_skills,
+                benchmarks_dir=benchmarks_dir,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if fail_fast:
+                raise LayerEvaluationError(skill.name, lid, exc) from exc
+            print(
+                f"[WARN] layer evaluation failed: skill={skill.name} layer={lid} error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            layer_results[lid] = _error_layer_result(lid, skill.name, exc)
     return skill.name, layer_results
+
+
+def _collect_results_sequential(skills, layer_ids, all_skills, benchmarks_dir, fail_fast):
+    """순차 실행으로 결과 수집."""
+    results = {}
+    for skill in skills:
+        name, layer_results = _evaluate_one_skill((skill, layer_ids, all_skills, benchmarks_dir, fail_fast))
+        results[name] = layer_results
+    return results
+
+
+def _collect_results_parallel(tasks, workers):
+    """병렬 실행으로 결과 수집."""
+    results = {}
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        for name, layer_results in ex.map(_evaluate_one_skill, tasks):
+            results[name] = layer_results
+    return results
 
 
 def run(args) -> int:
@@ -59,6 +116,10 @@ def run(args) -> int:
                 return 1
     else:
         layer_ids = list(LAYERS.keys())
+    missing_weights = sorted(lid for lid in layer_ids if lid not in config.layer_weights)
+    if missing_weights:
+        print(f"[ERROR] Missing layer weights for selected layers: {', '.join(missing_weights)}", file=sys.stderr)
+        return 1
     if args.workers < 1:
         print("--workers must be >= 1", file=sys.stderr)
         return 1
@@ -75,23 +136,25 @@ def run(args) -> int:
             return 1
 
     benchmarks_dir = args.benchmarks or Path(__file__).parent.parent / "benchmarks"
+    fail_fast = args.fail_fast
 
-    results = {}
-    if args.workers == 1 or len(skills) <= 1:
-        for skill in skills:
-            name, layer_results = _evaluate_one_skill((skill, layer_ids, skills, benchmarks_dir))
-            results[name] = layer_results
-    else:
-        tasks = [(skill, layer_ids, skills, benchmarks_dir) for skill in skills]
-        try:
-            with ProcessPoolExecutor(max_workers=args.workers) as ex:
-                for name, layer_results in ex.map(_evaluate_one_skill, tasks):
-                    results[name] = layer_results
-        except (PermissionError, OSError):
-            # 일부 샌드박스/환경에서 프로세스 풀 생성이 제한될 수 있으므로 순차 실행으로 복구.
-            for skill in skills:
-                name, layer_results = _evaluate_one_skill((skill, layer_ids, skills, benchmarks_dir))
-                results[name] = layer_results
+    try:
+        if args.workers == 1 or len(skills) <= 1:
+            results = _collect_results_sequential(
+                skills, layer_ids, skills, benchmarks_dir, fail_fast
+            )
+        else:
+            tasks = [(skill, layer_ids, skills, benchmarks_dir, fail_fast) for skill in skills]
+            try:
+                results = _collect_results_parallel(tasks, args.workers)
+            except (PermissionError, OSError):
+                # 일부 샌드박스/환경에서 프로세스 풀이 제한될 수 있으므로 순차 실행으로 복구.
+                results = _collect_results_sequential(
+                    skills, layer_ids, skills, benchmarks_dir, fail_fast
+                )
+    except LayerEvaluationError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        return 1
 
     ecosystem_result = evaluate_ecosystem(skills) if args.ecosystem else None
 

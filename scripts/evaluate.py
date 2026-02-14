@@ -67,6 +67,10 @@ def main():
         "--workers", type=int, default=1,
         help="Number of parallel workers for per-skill evaluation (default: 1)",
     )
+    parser.add_argument(
+        "--fail-fast", action="store_true",
+        help="Abort immediately if any layer evaluation raises runtime exception",
+    )
     args = parser.parse_args()
     sys.exit(run(args))
 

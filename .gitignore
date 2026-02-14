@@ -28,6 +28,7 @@ gemini_feedback.md
 
 # 로컬 히스토리
 .history/
+.worktrees/
 
 # 로컬 환경 변수
 .env

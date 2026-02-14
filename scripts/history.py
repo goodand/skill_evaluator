@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-from reporter import weighted_score
+from score_utils import weighted_score
 
 
 DEFAULT_HISTORY_PATH = Path(__file__).parent.parent / "reports" / "history.jsonl"
