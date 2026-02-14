@@ -2,7 +2,8 @@
 
 import json
 
-from eval_config import DEFAULT_LAYER_WEIGHTS, EvalConfig, load_eval_config
+from config_loader import load_eval_config
+from eval_config import DEFAULT_LAYER_WEIGHTS, EvalConfig
 
 
 class TestLoadEvalConfig:
@@ -33,4 +34,3 @@ class TestLoadEvalConfig:
         assert cfg.layer_weights["L6"] == 0.0
         # unspecified keys keep defaults
         assert cfg.layer_weights["L5"] == DEFAULT_LAYER_WEIGHTS["L5"]
-

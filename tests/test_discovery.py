@@ -1,8 +1,6 @@
 """discovery.py 단위 테스트 + 통합 테스트."""
 
-import os
 import pytest
-from pathlib import Path
 
 from discovery import (
     _parse_yaml_frontmatter,
@@ -11,12 +9,6 @@ from discovery import (
     parse_skill_md,
     discover_skills,
 )
-
-# 통합 테스트용 실제 경로 (conftest.py에서 sys.path 설정됨)
-SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", ""))
-TROUBLESHOOTING_COT_DIR = SKILLS_ROOT / "troubleshooting-cot-2"
-DEPSOLVE_ANALYZER_DIR = SKILLS_ROOT / "depsolve-analyzer"
-
 
 # ──────────────────────────────────────────────
 # _parse_yaml_frontmatter
@@ -409,15 +401,29 @@ class TestParseSkillMdUnit:
 
 
 # ──────────────────────────────────────────────
-# parse_skill_md - 통합 테스트 (실제 스킬 디렉토리)
+# parse_skill_md - 통합 성격 테스트 (mock skill tree)
 # ──────────────────────────────────────────────
 
-@pytest.mark.integration
 class TestParseSkillMdIntegration:
 
-    def test_troubleshooting_cot(self):
-        """실제 troubleshooting-cot-2 스킬 파싱."""
-        result = parse_skill_md(TROUBLESHOOTING_COT_DIR)
+    def test_troubleshooting_like_skill(self, tmp_path):
+        """troubleshooting 유사 스킬 파싱."""
+        skill_dir = tmp_path / "troubleshooting-cot-2"
+        skill_dir.mkdir()
+        (skill_dir / "scripts").mkdir()
+        (skill_dir / "references").mkdir()
+        (skill_dir / "DESIGN_DECISION.md").write_text("# decisions", encoding="utf-8")
+        body = "\n".join([f"line {i}" for i in range(120)])
+        (skill_dir / "SKILL.md").write_text(
+            (
+                "---\n"
+                "name: troubleshooting-cot\n"
+                "description: Chain-of-Thought 트러블슈팅. 트리거: 트러블슈팅, 디버깅, root cause.\n"
+                "---\n"
+            ) + body,
+            encoding="utf-8",
+        )
+        result = parse_skill_md(skill_dir)
         assert result is not None
         assert result.name == "troubleshooting-cot"
         assert "Chain-of-Thought" in result.description or "트러블슈팅" in result.description
@@ -429,15 +435,30 @@ class TestParseSkillMdIntegration:
         assert len(result.triggers.keywords) >= 3
         assert "트러블슈팅" in result.triggers.keywords
 
-    def test_depsolve_analyzer(self):
-        """실제 depsolve-analyzer 스킬 파싱 (markdown 트리거 섹션 edge case)."""
-        result = parse_skill_md(DEPSOLVE_ANALYZER_DIR)
+    def test_depsolve_like_skill(self, tmp_path):
+        """depsolve 유사 스킬 파싱 (yaml+markdown 트리거 병합)."""
+        skill_dir = tmp_path / "depsolve-analyzer"
+        skill_dir.mkdir()
+        (skill_dir / "scripts").mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            (
+                "---\n"
+                "name: depsolve-analyzer\n"
+                "description: Analyze deps. Triggers on \"phantom\", \"circular dependency\".\n"
+                "---\n"
+                "## 트리거\n"
+                "- \"phantom\", \"팬텀\"\n"
+                "- \"순환 의존성\", \"circular dependency\"\n"
+            ),
+            encoding="utf-8",
+        )
+        result = parse_skill_md(skill_dir)
         assert result is not None
         assert result.name == "depsolve-analyzer"
         assert result.has_scripts_dir is True
         # depsolve-analyzer는 YAML description + markdown ## 트리거 양쪽에 키워드가 있다
         assert result.triggers.source == "both"
-        assert len(result.triggers.keywords) >= 5
+        assert len(result.triggers.keywords) >= 4
         # markdown 섹션에서 추출된 키워드 확인
         assert "phantom" in result.triggers.keywords or "팬텀" in result.triggers.keywords
         assert "순환 의존성" in result.triggers.keywords or "circular dependency" in result.triggers.keywords
@@ -516,24 +537,36 @@ class TestDiscoverSkillsUnit:
 
 
 # ──────────────────────────────────────────────
-# discover_skills - 통합 테스트
+# discover_skills - 통합 성격 테스트 (mock skill tree)
 # ──────────────────────────────────────────────
 
-@pytest.mark.integration
 class TestDiscoverSkillsIntegration:
 
-    def test_discover_real_skills(self):
-        """실제 skills root에서 8개 스킬 탐지."""
-        skills = discover_skills(SKILLS_ROOT)
-        assert len(skills) == 8
-
+    def test_discover_mock_skills(self, tmp_path):
+        """mock skills root에서 스킬 탐지."""
+        for name in ["depsolve-analyzer", "troubleshooting-cot"]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: {name} desc\n---\n",
+                encoding="utf-8",
+            )
+        skills = discover_skills(tmp_path)
+        assert len(skills) == 2
         names = [s.name for s in skills]
         assert "depsolve-analyzer" in names
         assert "troubleshooting-cot" in names
 
-    def test_all_skills_have_name_and_description(self):
-        """모든 스킬에 name과 description이 있어야 함."""
-        skills = discover_skills(SKILLS_ROOT)
+    def test_all_mock_skills_have_name_and_description(self, tmp_path):
+        """모든 mock 스킬에 name과 description이 있어야 함."""
+        for name in ["alpha", "beta", "gamma"]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: {name} desc\n---\n",
+                encoding="utf-8",
+            )
+        skills = discover_skills(tmp_path)
         for skill in skills:
             assert skill.name, f"Skill at {skill.skill_path} has empty name"
             # description이 빈 스킬도 있을 수 있지만 name은 필수

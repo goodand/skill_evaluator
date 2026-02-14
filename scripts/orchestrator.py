@@ -2,11 +2,11 @@
 
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+from config_loader import load_eval_config
 from discovery import discover_skills
-from eval_config import load_eval_config
 from evaluators import LAYERS, evaluate_ecosystem
 from history import (
     _build_snapshot,
@@ -88,10 +88,10 @@ def run(args) -> int:
                 for name, layer_results in ex.map(_evaluate_one_skill, tasks):
                     results[name] = layer_results
         except (PermissionError, OSError):
-            # 일부 샌드박스 환경에서 프로세스 풀 생성이 제한될 수 있음.
-            with ThreadPoolExecutor(max_workers=args.workers) as ex:
-                for name, layer_results in ex.map(_evaluate_one_skill, tasks):
-                    results[name] = layer_results
+            # 일부 샌드박스/환경에서 프로세스 풀 생성이 제한될 수 있으므로 순차 실행으로 복구.
+            for skill in skills:
+                name, layer_results = _evaluate_one_skill((skill, layer_ids, skills, benchmarks_dir))
+                results[name] = layer_results
 
     ecosystem_result = evaluate_ecosystem(skills) if args.ecosystem else None
 

@@ -16,7 +16,7 @@ from evaluators.l1_structural import (
     check_resource_independence,
     evaluate as evaluate_l1,
 )
-from helpers import SKILLS_ROOT, TROUBLESHOOTING_COT_DIR, make_skill
+from helpers import make_skill
 from discovery import parse_skill_md
 
 
@@ -274,10 +274,17 @@ class TestEvaluateL1:
         result = evaluate_l1(skill)
         assert len(result.recommendations) >= 1
 
-    @pytest.mark.integration
-    def test_evaluate_l1_real_skill(self):
-        """실제 troubleshooting-cot-2 스킬의 L1 평가."""
-        skill = parse_skill_md(TROUBLESHOOTING_COT_DIR)
+    def test_evaluate_l1_mock_realish_skill(self, tmp_path):
+        """실사용 형태와 유사한 mock 스킬의 L1 평가."""
+        skill = make_skill(
+            tmp_path,
+            name="troubleshooting-cot",
+            dir_name="troubleshooting-cot-2",
+            description="Chain-of-Thought 트러블슈팅. 트리거: 트러블슈팅, 디버깅, root cause.",
+            triggers=["트러블슈팅", "디버깅", "root cause"],
+            create_scripts=True,
+            create_references=True,
+        )
         assert skill is not None
 
         result = evaluate_l1(skill)
@@ -302,13 +309,51 @@ EVALUATE_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "evaluate
 
 class TestCLI:
 
-    @pytest.mark.integration
-    def test_cli_json_output(self):
+    def _make_cli_skills_root(self, tmp_path):
+        make_skill(
+            tmp_path,
+            name="troubleshooting-cot",
+            description="troubleshooting skill. 트리거: troubleshoot, debug, root cause.",
+            triggers=["troubleshoot", "debug", "root cause"],
+            create_scripts=True,
+            script_contents={
+                "main.py": (
+                    "#!/usr/bin/env python3\n"
+                    "\"\"\"main\"\"\"\n"
+                    "import argparse\n"
+                    "parser = argparse.ArgumentParser()\n"
+                    "parser.add_argument('--format', '-f')\n"
+                )
+            },
+            create_references=True,
+            reference_contents={"guide.md": "# Guide\nline\nline\nline\nline\nline\n"},
+        )
+        make_skill(
+            tmp_path,
+            name="depsolve-analyzer",
+            description="depsolve skill. Triggers on \"phantom\", \"circular dependency\".",
+            triggers=["phantom", "circular dependency"],
+            create_scripts=True,
+            script_contents={
+                "main.py": (
+                    "#!/usr/bin/env python3\n"
+                    "\"\"\"main\"\"\"\n"
+                    "import argparse\n"
+                    "parser = argparse.ArgumentParser()\n"
+                    "parser.add_argument('--output', '-o')\n"
+                )
+            },
+            create_references=True,
+            reference_contents={"api.md": "# API\nline\nline\nline\nline\nline\n"},
+        )
+
+    def test_cli_json_output(self, tmp_path):
         """CLI --format json 출력이 유효한 JSON인지 확인."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--format", "json",
             ],
             capture_output=True,
@@ -317,21 +362,21 @@ class TestCLI:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
         data = json.loads(result.stdout)
-        assert len(data["skills"]) == 8
-        assert data["summary"]["total_skills"] == 8
+        assert len(data["skills"]) == 2
+        assert data["summary"]["total_skills"] == 2
         # 각 스킬에 layers와 weighted_score 존재
         for skill in data["skills"]:
             assert "layers" in skill
             assert "weighted_score" in skill
             assert "name" in skill
 
-    @pytest.mark.integration
-    def test_cli_text_output(self):
+    def test_cli_text_output(self, tmp_path):
         """CLI 기본 텍스트 출력 확인."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
             ],
             capture_output=True,
             text=True,
@@ -341,13 +386,13 @@ class TestCLI:
         assert "Skill Evaluator" in result.stdout
         assert "Weighted:" in result.stdout
 
-    @pytest.mark.integration
-    def test_cli_single_skill(self):
+    def test_cli_single_skill(self, tmp_path):
         """CLI --skill 옵션으로 특정 스킬만 평가."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--skill", "troubleshooting-cot",
                 "--format", "json",
             ],
@@ -360,13 +405,13 @@ class TestCLI:
         assert len(data["skills"]) == 1
         assert data["skills"][0]["name"] == "troubleshooting-cot"
 
-    @pytest.mark.integration
-    def test_cli_single_layer(self):
+    def test_cli_single_layer(self, tmp_path):
         """CLI --layer 옵션으로 특정 레이어만 평가."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--skill", "troubleshooting-cot",
                 "--layer", "L1,L4",
                 "--format", "json",
@@ -382,14 +427,14 @@ class TestCLI:
         assert "L4" in skill["layers"]
         assert "L2" not in skill["layers"]
 
-    @pytest.mark.integration
     def test_cli_output_to_file(self, tmp_path):
         """CLI -o 옵션으로 파일 출력."""
+        self._make_cli_skills_root(tmp_path)
         outfile = tmp_path / "result.json"
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--format", "json",
                 "-o", str(outfile),
             ],
@@ -477,13 +522,50 @@ class TestCLI:
         par_skills = sorted(data_par["skills"], key=lambda x: x["name"])
         assert seq_skills == par_skills
 
-    @pytest.mark.integration
-    def test_cli_skill_not_found(self):
+    def test_cli_workers_reproducible_across_runs(self, tmp_path):
+        """동일 입력에서 --workers=2 결과가 반복 실행 간 동일해야 한다."""
+        make_skill(
+            tmp_path,
+            name="worker-repro-a",
+            create_scripts=True,
+            script_contents={"a.py": "#!/usr/bin/env python3\n\"\"\"x\"\"\"\n"},
+            create_references=True,
+            reference_contents={"guide.md": "# Guide\nline\nline\nline\nline\nline\n"},
+        )
+        make_skill(
+            tmp_path,
+            name="worker-repro-b",
+            create_scripts=True,
+            script_contents={"b.py": "#!/usr/bin/env python3\n\"\"\"x\"\"\"\n"},
+            create_references=True,
+            reference_contents={"guide.md": "# Guide\nline\nline\nline\nline\nline\n"},
+        )
+
+        cmd = [
+            sys.executable, str(EVALUATE_SCRIPT),
+            "--skills-root", str(tmp_path),
+            "--format", "json",
+            "--workers", "2",
+        ]
+        r1 = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert r1.returncode == 0, f"stderr: {r1.stderr}"
+        assert r2.returncode == 0, f"stderr: {r2.stderr}"
+
+        d1 = json.loads(r1.stdout)
+        d2 = json.loads(r2.stdout)
+        assert d1["summary"] == d2["summary"]
+        s1 = sorted(d1["skills"], key=lambda x: x["name"])
+        s2 = sorted(d2["skills"], key=lambda x: x["name"])
+        assert s1 == s2
+
+    def test_cli_skill_not_found(self, tmp_path):
         """존재하지 않는 스킬 이름이면 exit code 1."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--skill", "nonexistent-skill-xyz",
             ],
             capture_output=True,
@@ -493,13 +575,13 @@ class TestCLI:
         assert result.returncode == 1
         assert "not found" in result.stderr
 
-    @pytest.mark.integration
-    def test_cli_markdown_output(self):
+    def test_cli_markdown_output(self, tmp_path):
         """CLI --format markdown 출력 확인."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--skill", "troubleshooting-cot",
                 "--format", "markdown",
             ],
@@ -511,13 +593,13 @@ class TestCLI:
         assert "# Skill Evaluation Report" in result.stdout
         assert "troubleshooting-cot" in result.stdout
 
-    @pytest.mark.integration
-    def test_cli_ecosystem(self):
+    def test_cli_ecosystem(self, tmp_path):
         """CLI --ecosystem 옵션 확인."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--ecosystem",
             ],
             capture_output=True,
@@ -527,13 +609,13 @@ class TestCLI:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "Ecosystem Health" in result.stdout
 
-    @pytest.mark.integration
-    def test_cli_ci_mode(self):
+    def test_cli_ci_mode(self, tmp_path):
         """CLI --ci-mode 옵션 확인."""
+        self._make_cli_skills_root(tmp_path)
         result = subprocess.run(
             [
                 sys.executable, str(EVALUATE_SCRIPT),
-                "--skills-root", str(SKILLS_ROOT),
+                "--skills-root", str(tmp_path),
                 "--ci-mode",
                 "--threshold", "30.0",
             ],
@@ -544,7 +626,6 @@ class TestCLI:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "CI PASSED" in result.stderr
 
-    @pytest.mark.integration
     def test_cli_show_history(self):
         """CLI --show-history 옵션 확인."""
         result = subprocess.run(

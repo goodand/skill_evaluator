@@ -1,8 +1,6 @@
-"""평가 설정 로더 및 기본값."""
+"""평가 설정 데이터 모델 및 기본값."""
 
-import json
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 DEFAULT_LAYER_WEIGHTS = {
@@ -22,20 +20,3 @@ class EvalConfig:
     skills_root: str = ""
     threshold: float = 60.0
     layer_weights: dict = field(default_factory=lambda: dict(DEFAULT_LAYER_WEIGHTS))
-
-
-def load_eval_config(config_path: Path) -> EvalConfig:
-    """config.json을 로드해 EvalConfig를 반환."""
-    if not config_path.exists():
-        return EvalConfig()
-
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
-    merged_weights = dict(DEFAULT_LAYER_WEIGHTS)
-    merged_weights.update(raw.get("layer_weights", {}))
-
-    return EvalConfig(
-        skills_root=raw.get("skills_root", ""),
-        threshold=raw.get("threshold", 60.0),
-        layer_weights=merged_weights,
-    )
-
