@@ -5,21 +5,7 @@ from datetime import datetime
 
 from models import LayerResult, EcosystemResult
 from eval_config import DEFAULT_LAYER_WEIGHTS
-
-
-def weighted_score(layer_results: dict, layer_weights: dict = None) -> float:
-    """가중 평균 점수 계산."""
-    weights = layer_weights or DEFAULT_LAYER_WEIGHTS
-    missing = sorted(lid for lid in layer_results.keys() if lid not in weights)
-    if missing:
-        raise ValueError(f"Missing layer weights for: {', '.join(missing)}")
-    total_weight = 0.0
-    weighted_sum = 0.0
-    for lid, lr in layer_results.items():
-        w = weights.get(lid, 0)
-        weighted_sum += lr.overall_score * w
-        total_weight += w
-    return weighted_sum / total_weight if total_weight > 0 else 0.0
+from score_utils import weighted_score, summarize_results
 
 
 def _ecosystem_text(eco: EcosystemResult) -> str:
@@ -65,10 +51,12 @@ def format_text(results: dict, ecosystem_result=None, layer_weights: dict = None
                 lines.append(f"    - {r}")
         lines.append("")
 
-    all_w = [weighted_score(lrs, layer_weights=layer_weights) for lrs in results.values()]
-    avg = sum(all_w) / len(all_w) if all_w else 0
+    summary = summarize_results(results, layer_weights=layer_weights)
     lines.append("-" * 60)
-    lines.append(f"Total: {len(results)} skills | Layers: {', '.join(layers_used)} | Weighted Avg: {avg:.1f}/100")
+    lines.append(
+        f"Total: {summary['total_skills']} skills | Layers: {', '.join(layers_used)} | "
+        f"Weighted Avg: {summary['weighted_average']:.1f}/100 | Errors: {summary['error_count']}"
+    )
     lines.append("")
 
     if ecosystem_result:
@@ -97,14 +85,7 @@ def format_json(results: dict, ecosystem_result=None, layer_weights: dict = None
         skill_data["weighted_score"] = round(weighted_score(layer_results, layer_weights=weights), 1)
         output["skills"].append(skill_data)
 
-    all_w = [weighted_score(lrs, layer_weights=weights) for lrs in results.values()]
-    output["summary"] = {
-        "total_skills": len(results),
-        "weighted_average": round(sum(all_w) / len(all_w), 1) if all_w else 0,
-        "min": round(min(all_w), 1) if all_w else 0,
-        "max": round(max(all_w), 1) if all_w else 0,
-        "layer_weights": weights,
-    }
+    output["summary"] = summarize_results(results, layer_weights=weights)
 
     if ecosystem_result:
         output["ecosystem"] = {
@@ -146,9 +127,11 @@ def format_markdown(results: dict, ecosystem_result=None, layer_weights: dict = 
         cells = [f"{layer_results[lid].overall_score:.0f}" if lid in layer_results else "-" for lid in layers_used]
         lines.append(f"| {skill_name} | " + " | ".join(cells) + f" | **{w:.1f}** |")
 
-    all_w = [weighted_score(lrs, layer_weights=weights) for lrs in results.values()]
-    avg = sum(all_w) / len(all_w) if all_w else 0
+    summary = summarize_results(results, layer_weights=weights)
+    avg = summary["weighted_average"]
     lines.append(f"| **Average** | " + " | ".join(["" for _ in layers_used]) + f" | **{avg:.1f}** |")
+    lines.append("")
+    lines.append(f"Errors: {summary['error_count']}")
     lines.append("")
 
     # 스킬별 상세
