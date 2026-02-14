@@ -27,7 +27,7 @@ def _compute_evaluator_version() -> str:
     return hasher.hexdigest()[:12]
 
 
-def _build_snapshot(
+def build_snapshot(
     results: dict,
     ecosystem_result=None,
     evaluator_version: str = None,
@@ -64,7 +64,7 @@ def save_snapshot(results: dict, ecosystem_result=None, filepath: Path = None, l
     if filepath is None:
         filepath = DEFAULT_HISTORY_PATH
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    snapshot = _build_snapshot(results, ecosystem_result, layer_weights=layer_weights)
+    snapshot = build_snapshot(results, ecosystem_result, layer_weights=layer_weights)
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
     return filepath

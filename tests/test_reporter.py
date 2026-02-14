@@ -95,6 +95,12 @@ class TestWeightedScore:
         )
         assert result == 50.0
 
+    def test_raises_for_missing_layer_weight(self):
+        """레이어 가중치 누락 시 예외."""
+        lr = _make_layer_result("L1")
+        with pytest.raises(ValueError):
+            weighted_score({"L1": lr}, layer_weights={"L4": 1.0})
+
 
 # ──────────────────────────────────────────────
 # format_text

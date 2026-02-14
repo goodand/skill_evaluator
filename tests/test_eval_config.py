@@ -34,3 +34,27 @@ class TestLoadEvalConfig:
         assert cfg.layer_weights["L6"] == 0.0
         # unspecified keys keep defaults
         assert cfg.layer_weights["L5"] == DEFAULT_LAYER_WEIGHTS["L5"]
+
+    def test_invalid_unknown_layer_weight_key_raises(self, tmp_path):
+        fp = tmp_path / "config.json"
+        fp.write_text(
+            json.dumps({"layer_weights": {"L7": 0.1}}),
+            encoding="utf-8",
+        )
+        try:
+            load_eval_config(fp)
+            assert False, "Expected ValueError"
+        except ValueError as e:
+            assert "Unknown layer weight keys" in str(e)
+
+    def test_invalid_negative_weight_raises(self, tmp_path):
+        fp = tmp_path / "config.json"
+        fp.write_text(
+            json.dumps({"layer_weights": {"L1": -0.1}}),
+            encoding="utf-8",
+        )
+        try:
+            load_eval_config(fp)
+            assert False, "Expected ValueError"
+        except ValueError as e:
+            assert "must be non-negative" in str(e)

@@ -9,7 +9,7 @@ from config_loader import load_eval_config
 from discovery import discover_skills
 from evaluators import LAYERS, evaluate_ecosystem
 from history import (
-    _build_snapshot,
+    build_snapshot,
     compute_diff,
     format_diff_text,
     format_history_text,
@@ -108,7 +108,7 @@ def run(args) -> int:
                 print(f"Invalid history index: {args.diff} (1-{len(history)})", file=sys.stderr)
                 return 1
             baseline = history[idx]
-        current_snap = _build_snapshot(
+        current_snap = build_snapshot(
             results,
             ecosystem_result,
             layer_weights=config.layer_weights,

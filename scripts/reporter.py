@@ -10,6 +10,9 @@ from eval_config import DEFAULT_LAYER_WEIGHTS
 def weighted_score(layer_results: dict, layer_weights: dict = None) -> float:
     """가중 평균 점수 계산."""
     weights = layer_weights or DEFAULT_LAYER_WEIGHTS
+    missing = sorted(lid for lid in layer_results.keys() if lid not in weights)
+    if missing:
+        raise ValueError(f"Missing layer weights for: {', '.join(missing)}")
     total_weight = 0.0
     weighted_sum = 0.0
     for lid, lr in layer_results.items():
