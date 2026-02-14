@@ -430,6 +430,53 @@ class TestCLI:
         assert result.returncode == 1
         assert "No skills found" in result.stderr
 
+    def test_cli_workers_results_equivalent(self, tmp_path):
+        """--workers 1/2 결과가 동일해야 한다."""
+        make_skill(
+            tmp_path,
+            name="worker-skill-a",
+            create_scripts=True,
+            script_contents={"a.py": "#!/usr/bin/env python3\n\"\"\"x\"\"\"\n"},
+            create_references=True,
+            reference_contents={"guide.md": "# Guide\nline\nline\nline\nline\nline\n"},
+        )
+        make_skill(
+            tmp_path,
+            name="worker-skill-b",
+            create_scripts=True,
+            script_contents={"b.py": "#!/usr/bin/env python3\n\"\"\"x\"\"\"\n"},
+            create_references=True,
+            reference_contents={"guide.md": "# Guide\nline\nline\nline\nline\nline\n"},
+        )
+
+        cmd_base = [
+            sys.executable, str(EVALUATE_SCRIPT),
+            "--skills-root", str(tmp_path),
+            "--format", "json",
+        ]
+        seq = subprocess.run(
+            cmd_base + ["--workers", "1"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        par = subprocess.run(
+            cmd_base + ["--workers", "2"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert seq.returncode == 0, f"stderr: {seq.stderr}"
+        assert par.returncode == 0, f"stderr: {par.stderr}"
+
+        data_seq = json.loads(seq.stdout)
+        data_par = json.loads(par.stdout)
+        assert data_seq["summary"] == data_par["summary"]
+        seq_skills = sorted(data_seq["skills"], key=lambda x: x["name"])
+        par_skills = sorted(data_par["skills"], key=lambda x: x["name"])
+        assert seq_skills == par_skills
+
     @pytest.mark.integration
     def test_cli_skill_not_found(self):
         """존재하지 않는 스킬 이름이면 exit code 1."""

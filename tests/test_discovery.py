@@ -1,5 +1,6 @@
 """discovery.py 단위 테스트 + 통합 테스트."""
 
+import os
 import pytest
 from pathlib import Path
 
@@ -12,10 +13,7 @@ from discovery import (
 )
 
 # 통합 테스트용 실제 경로 (conftest.py에서 sys.path 설정됨)
-SKILLS_ROOT = Path(
-    "/Users/jaehyuntak/Desktop/Project_____현재_진행중인"
-    "/narrative-ai/.claude/skills"
-)
+SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", ""))
 TROUBLESHOOTING_COT_DIR = SKILLS_ROOT / "troubleshooting-cot-2"
 DEPSOLVE_ANALYZER_DIR = SKILLS_ROOT / "depsolve-analyzer"
 

@@ -1,5 +1,6 @@
 """테스트 공용 상수 + 스킬 팩토리 함수."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,10 +15,7 @@ from discovery import parse_skill_md
 # 통합 테스트용 실제 스킬 경로 상수
 # ──────────────────────────────────────────────
 
-SKILLS_ROOT = Path(
-    "/Users/jaehyuntak/Desktop/Project_____현재_진행중인"
-    "/narrative-ai/.claude/skills"
-)
+SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", ""))
 
 TROUBLESHOOTING_COT_DIR = SKILLS_ROOT / "troubleshooting-cot-2"
 DEPSOLVE_ANALYZER_DIR = SKILLS_ROOT / "depsolve-analyzer"

@@ -83,6 +83,18 @@ class TestWeightedScore:
         """빈 레이어 dict = 0."""
         assert weighted_score({}) == 0.0
 
+    def test_custom_layer_weights(self):
+        """커스텀 가중치 적용."""
+        l1 = _make_layer_result("L1")
+        l4 = LayerResult(layer="L4", skill_name="test")
+        l4.metrics = [MetricResult(name="m1", score=50.0, max_score=100.0, details="", passed=True)]
+        l4.compute_score()
+        result = weighted_score(
+            {"L1": l1, "L4": l4},
+            layer_weights={"L1": 0.0, "L4": 1.0},
+        )
+        assert result == 50.0
+
 
 # ──────────────────────────────────────────────
 # format_text
@@ -185,6 +197,11 @@ class TestFormatJson:
         assert "ecosystem" in data
         assert "overall_score" in data["ecosystem"]
         assert "metrics" in data["ecosystem"]
+
+    def test_custom_layer_weights_in_summary(self):
+        results = _make_results_single_layer()
+        data = json.loads(format_json(results, layer_weights={"L1": 1.0}))
+        assert data["summary"]["layer_weights"] == {"L1": 1.0}
 
 
 # ──────────────────────────────────────────────

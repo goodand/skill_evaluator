@@ -1,6 +1,7 @@
 """Score History — 스냅샷 저장/로드/비교."""
 
 import json
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -8,18 +9,42 @@ from reporter import weighted_score
 
 
 DEFAULT_HISTORY_PATH = Path(__file__).parent.parent / "reports" / "history.jsonl"
+_PROJECT_ROOT = Path(__file__).parent.parent
+_EVALUATOR_CODE_ROOT = _PROJECT_ROOT / "scripts"
 
 
-def _build_snapshot(results: dict, ecosystem_result=None) -> dict:
+def _compute_evaluator_version() -> str:
+    """Evaluator 코드 스냅샷 버전(sha256 앞 12자리)을 계산."""
+    hasher = hashlib.sha256()
+    for fp in sorted(_EVALUATOR_CODE_ROOT.rglob("*.py")):
+        if "__pycache__" in fp.parts:
+            continue
+        rel = fp.relative_to(_PROJECT_ROOT).as_posix()
+        hasher.update(rel.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(fp.read_bytes())
+        hasher.update(b"\0")
+    return hasher.hexdigest()[:12]
+
+
+def _build_snapshot(
+    results: dict,
+    ecosystem_result=None,
+    evaluator_version: str = None,
+    layer_weights: dict = None,
+) -> dict:
     """현재 결과를 스냅샷 dict로 변환."""
+    if evaluator_version is None:
+        evaluator_version = _compute_evaluator_version()
     snapshot = {
         "timestamp": datetime.now().isoformat(),
+        "evaluator_version": evaluator_version,
         "skills": {},
         "summary": {},
     }
     all_w = []
     for skill_name, layer_results in results.items():
-        w = weighted_score(layer_results)
+        w = weighted_score(layer_results, layer_weights=layer_weights)
         all_w.append(w)
         snapshot["skills"][skill_name] = {
             "weighted": round(w, 1),
@@ -34,12 +59,12 @@ def _build_snapshot(results: dict, ecosystem_result=None) -> dict:
     return snapshot
 
 
-def save_snapshot(results: dict, ecosystem_result=None, filepath: Path = None):
+def save_snapshot(results: dict, ecosystem_result=None, filepath: Path = None, layer_weights: dict = None):
     """스냅샷을 history.jsonl에 append."""
     if filepath is None:
         filepath = DEFAULT_HISTORY_PATH
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    snapshot = _build_snapshot(results, ecosystem_result)
+    snapshot = _build_snapshot(results, ecosystem_result, layer_weights=layer_weights)
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(json.dumps(snapshot, ensure_ascii=False) + "\n")
     return filepath
@@ -66,7 +91,19 @@ def get_latest(filepath: Path = None):
 
 def compute_diff(current: dict, baseline: dict) -> dict:
     """두 스냅샷 비교."""
-    diff = {"summary": {}, "skills": {}, "improved": [], "regressed": [], "new_skills": [], "removed_skills": []}
+    diff = {
+        "summary": {},
+        "skills": {},
+        "improved": [],
+        "regressed": [],
+        "new_skills": [],
+        "removed_skills": [],
+        "evaluator_version": {
+            "before": baseline.get("evaluator_version"),
+            "after": current.get("evaluator_version"),
+            "changed": baseline.get("evaluator_version") != current.get("evaluator_version"),
+        },
+    }
 
     for key in ["weighted_average", "skill_count"]:
         before = baseline.get("summary", {}).get(key, 0)
@@ -116,6 +153,11 @@ def format_diff_text(diff: dict) -> str:
     d = avg.get("delta", 0)
     arrow = "+" if d > 0 else ""
     lines.append(f"Weighted Avg: {avg.get('before', 0):.1f} → {avg.get('after', 0):.1f} ({arrow}{d:.1f})")
+    ev = diff.get("evaluator_version", {})
+    if ev.get("changed"):
+        lines.append(
+            f"Evaluator Version: {ev.get('before', 'unknown')} → {ev.get('after', 'unknown')}"
+        )
     lines.append("")
 
     for name, sd in diff["skills"].items():
@@ -143,7 +185,7 @@ def format_history_text(history: list) -> str:
     lines = [
         f"Score History ({len(history)} entries)",
         "=" * 50,
-        f"{'Date':<20} {'Skills':>6} {'Weighted Avg':>13} {'Delta':>7}",
+        f"{'Date':<20} {'Skills':>6} {'Weighted Avg':>13} {'Delta':>7} {'EvalVer':>8}",
         "-" * 50,
     ]
     prev_avg = None
@@ -157,7 +199,8 @@ def format_history_text(history: list) -> str:
             delta_str = f"{'+' if d > 0 else ''}{d:.1f}"
         else:
             delta_str = "--"
-        lines.append(f"{ts:<20} {count:>6} {avg:>13.1f} {delta_str:>7}")
+        ev = snap.get("evaluator_version", "n/a")
+        lines.append(f"{ts:<20} {count:>6} {avg:>13.1f} {delta_str:>7} {ev[:8]:>8}")
         prev_avg = avg
     lines.append("=" * 50)
     if len(history) >= 2:

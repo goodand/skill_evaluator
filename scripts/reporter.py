@@ -4,20 +4,16 @@ import json
 from datetime import datetime
 
 from models import LayerResult, EcosystemResult
+from eval_config import DEFAULT_LAYER_WEIGHTS
 
 
-LAYER_WEIGHTS = {
-    "L1": 0.20, "L2": 0.15, "L3": 0.15,
-    "L4": 0.15, "L5": 0.25, "L6": 0.10,
-}
-
-
-def weighted_score(layer_results: dict) -> float:
+def weighted_score(layer_results: dict, layer_weights: dict = None) -> float:
     """가중 평균 점수 계산."""
+    weights = layer_weights or DEFAULT_LAYER_WEIGHTS
     total_weight = 0.0
     weighted_sum = 0.0
     for lid, lr in layer_results.items():
-        w = LAYER_WEIGHTS.get(lid, 0)
+        w = weights.get(lid, 0)
         weighted_sum += lr.overall_score * w
         total_weight += w
     return weighted_sum / total_weight if total_weight > 0 else 0.0
@@ -41,13 +37,13 @@ def _ecosystem_text(eco: EcosystemResult) -> str:
     return "\n".join(lines)
 
 
-def format_text(results: dict, ecosystem_result=None) -> str:
+def format_text(results: dict, ecosystem_result=None, layer_weights: dict = None) -> str:
     """Text 출력. results: {skill_name: {layer_id: LayerResult}}"""
     layers_used = sorted({lid for lrs in results.values() for lid in lrs})
     lines = ["=" * 60, f"Skill Evaluator - {', '.join(layers_used)}", "=" * 60, ""]
 
     for skill_name, layer_results in results.items():
-        w_score = weighted_score(layer_results)
+        w_score = weighted_score(layer_results, layer_weights=layer_weights)
         lines.append(f"[{skill_name}] Weighted: {w_score:.1f}/100")
 
         for lid in layers_used:
@@ -66,7 +62,7 @@ def format_text(results: dict, ecosystem_result=None) -> str:
                 lines.append(f"    - {r}")
         lines.append("")
 
-    all_w = [weighted_score(lrs) for lrs in results.values()]
+    all_w = [weighted_score(lrs, layer_weights=layer_weights) for lrs in results.values()]
     avg = sum(all_w) / len(all_w) if all_w else 0
     lines.append("-" * 60)
     lines.append(f"Total: {len(results)} skills | Layers: {', '.join(layers_used)} | Weighted Avg: {avg:.1f}/100")
@@ -78,8 +74,9 @@ def format_text(results: dict, ecosystem_result=None) -> str:
     return "\n".join(lines)
 
 
-def format_json(results: dict, ecosystem_result=None) -> str:
+def format_json(results: dict, ecosystem_result=None, layer_weights: dict = None) -> str:
     """JSON 출력."""
+    weights = layer_weights or DEFAULT_LAYER_WEIGHTS
     output = {"timestamp": datetime.now().isoformat(), "skills": [], "summary": {}}
 
     for skill_name, layer_results in results.items():
@@ -94,16 +91,16 @@ def format_json(results: dict, ecosystem_result=None) -> str:
                 ],
                 "recommendations": lr.recommendations,
             }
-        skill_data["weighted_score"] = round(weighted_score(layer_results), 1)
+        skill_data["weighted_score"] = round(weighted_score(layer_results, layer_weights=weights), 1)
         output["skills"].append(skill_data)
 
-    all_w = [weighted_score(lrs) for lrs in results.values()]
+    all_w = [weighted_score(lrs, layer_weights=weights) for lrs in results.values()]
     output["summary"] = {
         "total_skills": len(results),
         "weighted_average": round(sum(all_w) / len(all_w), 1) if all_w else 0,
         "min": round(min(all_w), 1) if all_w else 0,
         "max": round(max(all_w), 1) if all_w else 0,
-        "layer_weights": LAYER_WEIGHTS,
+        "layer_weights": weights,
     }
 
     if ecosystem_result:
@@ -120,15 +117,16 @@ def format_json(results: dict, ecosystem_result=None) -> str:
     return json.dumps(output, ensure_ascii=False, indent=2)
 
 
-def format_markdown(results: dict, ecosystem_result=None) -> str:
+def format_markdown(results: dict, ecosystem_result=None, layer_weights: dict = None) -> str:
     """Markdown 리포트."""
+    weights = layer_weights or DEFAULT_LAYER_WEIGHTS
     layers_used = sorted({lid for lrs in results.values() for lid in lrs})
     lines = [
         f"# Skill Evaluation Report",
         f"",
         f"> Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"> Layers: {', '.join(layers_used)}",
-        f"> Weights: {', '.join(f'{k}={v:.0%}' for k, v in LAYER_WEIGHTS.items() if k in layers_used)}",
+        f"> Weights: {', '.join(f'{k}={v:.0%}' for k, v in weights.items() if k in layers_used)}",
         f"",
     ]
 
@@ -141,11 +139,11 @@ def format_markdown(results: dict, ecosystem_result=None) -> str:
     lines.append(sep)
 
     for skill_name, layer_results in results.items():
-        w = weighted_score(layer_results)
+        w = weighted_score(layer_results, layer_weights=weights)
         cells = [f"{layer_results[lid].overall_score:.0f}" if lid in layer_results else "-" for lid in layers_used]
         lines.append(f"| {skill_name} | " + " | ".join(cells) + f" | **{w:.1f}** |")
 
-    all_w = [weighted_score(lrs) for lrs in results.values()]
+    all_w = [weighted_score(lrs, layer_weights=weights) for lrs in results.values()]
     avg = sum(all_w) / len(all_w) if all_w else 0
     lines.append(f"| **Average** | " + " | ".join(["" for _ in layers_used]) + f" | **{avg:.1f}** |")
     lines.append("")
@@ -154,7 +152,7 @@ def format_markdown(results: dict, ecosystem_result=None) -> str:
     lines.append("## Details")
     lines.append("")
     for skill_name, layer_results in results.items():
-        w = weighted_score(layer_results)
+        w = weighted_score(layer_results, layer_weights=weights)
         lines.append(f"### {skill_name} ({w:.1f})")
         lines.append("")
         for lid in layers_used:

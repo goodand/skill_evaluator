@@ -41,6 +41,8 @@ class TestBuildSnapshot:
         results = _make_results()
         snap = _build_snapshot(results)
         assert "timestamp" in snap
+        assert "evaluator_version" in snap
+        assert len(snap["evaluator_version"]) == 12
         assert "skills" in snap
         assert "summary" in snap
         assert "alpha" in snap["skills"]
@@ -137,9 +139,11 @@ class TestComputeDiff:
 
     def test_same_snapshot(self):
         results = _make_results()
-        snap = _build_snapshot(results)
-        diff = compute_diff(snap, snap)
+        baseline = _build_snapshot(results, evaluator_version="v-old")
+        current = _build_snapshot(results, evaluator_version="v-old")
+        diff = compute_diff(current, baseline)
         assert diff["summary"]["weighted_average"]["delta"] == 0
+        assert diff["evaluator_version"]["changed"] is False
         assert diff["improved"] == []
         assert diff["regressed"] == []
 
@@ -185,6 +189,15 @@ class TestComputeDiff:
         diff = compute_diff(current, baseline)
         assert "alpha" in diff["removed_skills"]
 
+    def test_evaluator_version_changed(self):
+        results = _make_results()
+        baseline = _build_snapshot(results, evaluator_version="abc123")
+        current = _build_snapshot(results, evaluator_version="def456")
+        diff = compute_diff(current, baseline)
+        assert diff["evaluator_version"]["changed"] is True
+        assert diff["evaluator_version"]["before"] == "abc123"
+        assert diff["evaluator_version"]["after"] == "def456"
+
 
 # ──────────────────────────────────────────────
 # format_diff_text
@@ -216,6 +229,14 @@ class TestFormatDiffText:
         text = format_diff_text(diff)
         assert "Improved: 1" in text
 
+    def test_evaluator_version_line_when_changed(self):
+        results = _make_results()
+        baseline = _build_snapshot(results, evaluator_version="abc123")
+        current = _build_snapshot(results, evaluator_version="def456")
+        diff = compute_diff(current, baseline)
+        text = format_diff_text(diff)
+        assert "Evaluator Version:" in text
+
 
 # ──────────────────────────────────────────────
 # format_history_text
@@ -236,6 +257,7 @@ class TestFormatHistoryText:
         text = format_history_text(history)
         assert "Score History" in text
         assert "2 entries" in text
+        assert "EvalVer" in text
 
     def test_trend(self, tmp_path):
         filepath = tmp_path / "history.jsonl"
